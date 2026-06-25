@@ -4,7 +4,8 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Dict, Any, List
+from urllib.parse import quote, unquote
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, StateFilter
@@ -17,16 +18,27 @@ from aiogram.types import (
     CallbackQuery, FSInputFile
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from dotenv import load_dotenv
 import yookassa
 from yookassa import Payment, Configuration
 
-import config
+# ---------- Загрузка .env ----------
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
+YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
+
+# ---------- Проверка обязательных переменных ----------
+if not BOT_TOKEN or not YOOKASSA_SHOP_ID or not YOOKASSA_SECRET_KEY:
+    raise EnvironmentError("Не заполнены обязательные переменные в .env (BOT_TOKEN, YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY)")
 
 # ---------- Абсолютный путь к папке скрипта ----------
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ---------- Настройка YooKassa ----------
-Configuration.configure(config.YOOKASSA_SHOP_ID, config.YOOKASSA_SECRET_KEY)
+Configuration.configure(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY)
 
 # ---------- Логирование ----------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -36,15 +48,39 @@ logger = logging.getLogger(__name__)
 DB_FILE = os.path.join(SCRIPT_DIR, "data.json")
 
 def load_db() -> Dict[str, Any]:
-    with open(DB_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        logger.error("База данных повреждена или отсутствует. Создаю новую.")
+        default_db = {
+            "users": {},
+            "promocodes": {
+                "ПРЯНЯ": {
+                    "code": "ПРЯНЯ",
+                    "discount": 50,
+                    "max_uses": None,
+                    "uses": 0,
+                    "created_by": 0,
+                    "created_at": "2026-06-20T00:00:00"
+                }
+            },
+            "stats": {
+                "total_users": 0,
+                "total_purchases": 0,
+                "total_stars_purchases": 0,
+                "total_yoomoney_purchases": 0
+            }
+        }
+        save_db(default_db)
+        return default_db
 
 def save_db(data: Dict[str, Any]):
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 # ---------- Инициализация бота и диспетчера ----------
-bot = Bot(token=config.BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
@@ -119,10 +155,10 @@ def can_purchase(user):
         return False, "❌ Вы уже приобрели ПРЯНЯ ВПН."
     return True, None
 
-async def create_yoomoney_payment(amount_rub: float, description: str, user_id: int, promo_code: str = None):
+async def create_yoomoney_payment(amount_rub: float, description: str, user_id: int, promo_code: str = None, payment_method: str = None):
     idempotence_key = str(uuid.uuid4())
     try:
-        payment = Payment.create({
+        data = {
             "amount": {
                 "value": f"{amount_rub:.2f}",
                 "currency": "RUB"
@@ -137,7 +173,10 @@ async def create_yoomoney_payment(amount_rub: float, description: str, user_id: 
                 "user_id": user_id,
                 "promo_code": promo_code or ""
             }
-        }, idempotence_key)
+        }
+        if payment_method == "sbp":
+            data["payment_method_data"] = {"type": "sbp"}
+        payment = Payment.create(data, idempotence_key)
         return payment.confirmation.confirmation_url, payment.id
     except Exception as e:
         logger.error(f"Ошибка создания платежа: {e}")
@@ -200,7 +239,6 @@ async def complete_purchase(user_id: int, method: str, promo_code: str = None):
             raise FileNotFoundError(f"Файлы не найдены:\n{instructions_path}\n{qr_path}")
         with open(instructions_path, "r", encoding="utf-8") as f:
             instructions = f.read()
-        # Исправление: используем FSInputFile
         photo = FSInputFile(qr_path)
         await bot.send_photo(
             chat_id=user_id,
@@ -223,7 +261,7 @@ async def complete_purchase(user_id: int, method: str, promo_code: str = None):
         f"Промокод: {used_promo or 'нет'}\n"
         f"Реферал от: {user['referrer_id'] or 'нет'}"
     )
-    for admin_id in config.ADMIN_IDS:
+    for admin_id in ADMIN_IDS:
         try:
             await bot.send_message(chat_id=admin_id, text=admin_msg)
         except Exception as e:
@@ -242,8 +280,9 @@ async def cmd_start(message: Message, state: FSMContext):
     referrer_id = None
     if len(args) > 1 and args[1].startswith("ref"):
         try:
-            referrer_id = int(args[1][3:])
-        except ValueError:
+            decoded = unquote(args[1])
+            referrer_id = int(decoded[3:])
+        except (ValueError, IndexError):
             pass
 
     user, is_new = ensure_user(db, user_id, username, first_name, referrer_id)
@@ -264,7 +303,7 @@ async def cmd_start(message: Message, state: FSMContext):
     await message.answer(welcome, reply_markup=main_menu_keyboard())
 
     if is_new:
-        for admin_id in config.ADMIN_IDS:
+        for admin_id in ADMIN_IDS:
             try:
                 await bot.send_message(chat_id=admin_id, text=f"🆕 Новый пользователь: {first_name} (ID: {user_id})")
             except:
@@ -306,15 +345,21 @@ async def menu_profile(callback: CallbackQuery):
         await callback.answer()
         return
     status = "✅ Куплен" if user["purchased"] else "❌ Не куплен"
+    me = await bot.get_me()
+    payload = quote(f"ref{user['id']}", safe='')
+    ref_link = f"https://t.me/{me.username}?start={payload}"
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="🔗 Моя реферальная ссылка", url=ref_link))
+    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="menu_back"))
     await callback.message.edit_text(
         f"👤 Твой профиль:\n"
         f"Имя: {user['first_name']}\n"
         f"ID: {user['id']}\n"
         f"💰 Баланс: {user['balance']:.2f} руб.\n"
         f"Статус VPN: {status}\n"
-        f"📅 Регистрация: {user['registered_at'][:10]}\n"
-        f"🔗 Реф. код: /start ref{user['id']}",
-        reply_markup=main_menu_keyboard()
+        f"📅 Регистрация: {user['registered_at'][:10]}\n\n"
+        f"Нажми кнопку ниже, чтобы скопировать реферальную ссылку 👇",
+        reply_markup=builder.as_markup()
     )
     await callback.answer()
 
@@ -322,16 +367,19 @@ async def menu_profile(callback: CallbackQuery):
 async def menu_referral(callback: CallbackQuery):
     user_id = callback.from_user.id
     me = await bot.get_me()
-    ref_link = f"https://t.me/{me.username}?start=ref{user_id}"
+    payload = quote(f"ref{user_id}", safe='')
+    ref_link = f"https://t.me/{me.username}?start={payload}"
     db = load_db()
     count = sum(1 for u in db["users"].values() if u.get("referrer_id") == user_id)
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="🔗 Моя реферальная ссылка", url=ref_link))
+    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="menu_back"))
     await callback.message.edit_text(
         f"👥 Партнёрская программа:\n\n"
-        f"🔗 Твоя ссылка:\n{ref_link}\n\n"
-        f"👫 Приглашено друзей: {count}\n"
-        f"🎁 Ты получишь 20 руб. на баланс после первой покупки друга!\n\n"
-        f"Делись и зарабатывай 🚀",
-        reply_markup=main_menu_keyboard()
+        f"Приглашено друзей: {count}\n"
+        f"Ты получишь 20 руб. на баланс после первой покупки друга!\n\n"
+        f"Скопируй ссылку по кнопке ниже или отправь другу вручную 🚀",
+        reply_markup=builder.as_markup()
     )
     await callback.answer()
 
@@ -360,7 +408,7 @@ async def cmd_stop_support(message: Message, state: FSMContext):
 
 @dp.message(StateFilter(SupportState.in_support))
 async def support_forward(message: Message):
-    for admin_id in config.ADMIN_IDS:
+    for admin_id in ADMIN_IDS:
         try:
             await message.forward(chat_id=admin_id)
             await message.answer("✅ Твоё сообщение отправлено администратору, жди ответа!")
@@ -463,6 +511,7 @@ async def start_yoomoney_payment(message: Message, user_id: int, promo_code: str
         if promo_info:
             final_price = 200.0 - promo_info["discount"]
 
+    # Создаём платёж без СБП по умолчанию (можно добавить кнопку СБП отдельно)
     confirmation_url, payment_id = await create_yoomoney_payment(
         final_price, "ПРЯНЯ ВПН навсегда", user_id, promo_code
     )
@@ -526,9 +575,9 @@ async def successful_payment_handler(message: Message):
 # ---------- Админ-панель (Inline) ----------
 def is_admin(callback_or_message) -> bool:
     if isinstance(callback_or_message, CallbackQuery):
-        return callback_or_message.from_user.id in config.ADMIN_IDS
+        return callback_or_message.from_user.id in ADMIN_IDS
     elif isinstance(callback_or_message, Message):
-        return callback_or_message.from_user.id in config.ADMIN_IDS
+        return callback_or_message.from_user.id in ADMIN_IDS
     return False
 
 def admin_panel_keyboard():
@@ -760,29 +809,7 @@ async def fallback(message: Message):
 
 # ---------- Запуск ----------
 async def main():
-    if not os.path.exists(DB_FILE):
-        default_db = {
-            "users": {},
-            "promocodes": {
-                "ПРЯНЯ": {
-                    "code": "ПРЯНЯ",
-                    "discount": 50,
-                    "max_uses": None,
-                    "uses": 0,
-                    "created_by": 0,
-                    "created_at": "2026-06-20T00:00:00"
-                }
-            },
-            "stats": {
-                "total_users": 0,
-                "total_purchases": 0,
-                "total_stars_purchases": 0,
-                "total_yoomoney_purchases": 0
-            }
-        }
-        with open(DB_FILE, "w", encoding="utf-8") as f:
-            json.dump(default_db, f, ensure_ascii=False, indent=4)
-
+    # База данных создаётся автоматически в load_db() при первом обращении
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
