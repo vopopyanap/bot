@@ -1,0 +1,10 @@
+1. Скачайте приложение Happ Proxy Utility:
+   - Android: https://play.google.com/store/apps/details?id=com.happproxy&hl=en-US&pli=1
+   - iOS: https://apps.apple.com/us/app/happ-proxy-utility/id6504287215
+2. Откройте приложение, нажмите «+» и выберите «QR-код».
+
+3. Наведите камеру на QR-код из этого бота или импортируйте с помощью "Галерея".
+
+4. Подключение произойдёт автоматически.
+
+По вопросам: /support
