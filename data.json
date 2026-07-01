@@ -6,7 +6,7 @@
             "first_name": "центральный @pryanyavpn",
             "referrer_id": null,
             "balance": 0.0,
-            "purchased": true,
+            "purchased": false,
             "purchase_date": "2026-06-21T07:31:33.915548+00:00",
             "purchase_method": "balance",
             "promo_used": null,
@@ -181,6 +181,32 @@
             "promo_used": null,
             "blocked": false,
             "registered_at": "2026-06-21T18:10:46.262331+00:00"
+        },
+        "8397069372": {
+            "id": 8397069372,
+            "username": "hrosq1k",
+            "first_name": "1ksros1kkqq",
+            "referrer_id": null,
+            "balance": 0.0,
+            "purchased": false,
+            "purchase_date": null,
+            "purchase_method": null,
+            "promo_used": null,
+            "blocked": false,
+            "registered_at": "2026-06-26T10:28:30.976252+00:00"
+        },
+        "1479852714": {
+            "id": 1479852714,
+            "username": "o1dins",
+            "first_name": "o1din",
+            "referrer_id": null,
+            "balance": 0.0,
+            "purchased": false,
+            "purchase_date": null,
+            "purchase_method": null,
+            "promo_used": null,
+            "blocked": false,
+            "registered_at": "2026-06-26T18:05:44.461671+00:00"
         }
     },
     "promocodes": {
@@ -199,10 +225,18 @@
             "uses": 1,
             "created_by": 7828604612,
             "created_at": "2026-06-21T06:49:11.862463+00:00"
+        },
+        "MAYA26": {
+            "code": "MAYA26",
+            "discount": 100.0,
+            "max_uses": 1,
+            "uses": 0,
+            "created_by": 7828604612,
+            "created_at": "2026-06-26T08:44:07.933017+00:00"
         }
     },
     "stats": {
-        "total_users": 14,
+        "total_users": 16,
         "total_purchases": 4,
         "total_stars_purchases": 0,
         "total_yoomoney_purchases": 1
